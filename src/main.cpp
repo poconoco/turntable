@@ -4,6 +4,8 @@
 #include <AccelStepper.h>
 #include <Encoder.h>
 
+//#define DEBUG
+
 const int dirPin = 2;
 const int stepPin = 3;
 const int encoderPinA = 5;
@@ -12,17 +14,33 @@ const int buttonPin = 4;
 
 const int eepromSpeedAddress = 0;
 const int speedSaveTimeout = 2000;
-const int speedStep = 10;
-const int maxSpeed = 1000;
+const int buttonDebounceTimeout = 250;
+
+const int encoderMax = 100;  // Number of encoder steps after which we ignore futher increase, 
+                             // goes both sides of 0, e.g. 0encoderMax to encoderMax
+
+const int stepperMaxSpeed = 2000;  // Max stepper speed in its steps per seconds
+
+int getProgressiveSpeed(int speed) {
+  const int sign = (speed < 0) ? -1 : 1;
+  return sign * (speed * speed) / ((encoderMax * encoderMax) / stepperMaxSpeed);
+}
 
 void setup() {
-  int16_t currentSpeed = 0;
-  int16_t lastSpeed = 0; 
-  int16_t savedSpeed = 0;
+  int16_t encoderInput = 0;
+  int16_t lastEncoderInput = 0;
+  int16_t savedEncoderInput = 0;
   bool buttonDown = false;
   bool lastButtonDown = false;
-  bool motorRunning = false;
+  bool stepperRunning = true;
   long lastSpeedChange = 0;
+  long lastButtonChange = 0;
+  int stepperSpeed;
+
+  // Initialize Serial for debugging
+  #ifdef DEBUG
+    Serial.begin(9600);
+  #endif
 
   AccelStepper stepper(AccelStepper::DRIVER, stepPin, dirPin);
   Encoder encoder(encoderPinA, encoderPinB);
@@ -31,55 +49,70 @@ void setup() {
   pinMode(encoderPinB, INPUT_PULLUP);
   pinMode(buttonPin, INPUT_PULLUP);
 
-  EEPROM.get(eepromSpeedAddress, savedSpeed);
+  EEPROM.get(eepromSpeedAddress, savedEncoderInput);
+
   // If saved speed is out of bounds, reset to a reasonable value
-  if (abs(savedSpeed) > maxSpeed) savedSpeed = 500;
-  lastSpeedChange = millis();
+  if (abs(savedEncoderInput) > encoderMax)
+    encoderInput = encoderMax / 20;
+  else
+    encoderInput = savedEncoderInput;
 
-  currentSpeed = savedSpeed;
-
-  stepper.setMaxSpeed(maxSpeed);
-  stepper.setSpeed(0);
+  stepper.setMaxSpeed(stepperMaxSpeed);
+  encoder.write(encoderInput);
 
   while(true) {
-    long now = millis();
+  long now = millis();
 
-    if (motorRunning) {
-      currentSpeed = encoder.read() * speedStep; // Scale encoder position to speed step
-      currentSpeed = constrain(currentSpeed, -maxSpeed, maxSpeed);
-      encoder.write(currentSpeed / speedStep); // Update encoder position with constrained value
+    if (stepperRunning) {
+      encoderInput = constrain(encoder.read(), -encoderMax, encoderMax);
+      stepperSpeed = getProgressiveSpeed(encoderInput);
+      encoder.write(encoderInput); // Update encoder position with constrained value
     }
     
     // Read button state
     buttonDown = digitalRead(buttonPin) == LOW;
     if (! buttonDown && lastButtonDown) {
-      // Toggle motor state on button up event
-      motorRunning = !motorRunning; 
-      if (motorRunning) {
-        stepper.setSpeed(currentSpeed);
-      } else {
-        stepper.setSpeed(0);
+      // Ignore quick toggles
+      if (now - lastButtonChange >= buttonDebounceTimeout) {
+        // Toggle motor state on button up event
+        stepperRunning = !stepperRunning; 
+        if (stepperRunning) {
+          #ifdef DEBUG
+            Serial.println("Motor on");
+          #endif
+          stepper.setSpeed(stepperSpeed);
+        } else {
+          #ifdef DEBUG
+            Serial.println("Motor off");
+          #endif
+          stepper.setSpeed(0);
+        }
+
+        lastSpeedChange = now;
+        lastButtonChange = now;
       }
+    } else if (encoderInput != lastEncoderInput && stepperRunning) {
+      stepper.setSpeed(stepperSpeed);
+      lastEncoderInput = encoderInput;
 
       lastSpeedChange = now;
-    } else if (currentSpeed != lastSpeed && motorRunning) {
-      stepper.setSpeed(currentSpeed);
-      lastSpeed = currentSpeed;
-
-      lastSpeedChange = now;
-    } 
+      #ifdef DEBUG
+        Serial.print("Speed: ");
+        Serial.println(progressiveSpeed);
+      #endif
+    }
 
     // Save speed to EEPROM after 2 seconds of inactivity
     if (now - lastSpeedChange > speedSaveTimeout) {
-      if (currentSpeed != savedSpeed) {
-        EEPROM.put(eepromSpeedAddress, currentSpeed);
-        savedSpeed = currentSpeed;
+      if (encoderInput != savedEncoderInput) {
+        EEPROM.put(eepromSpeedAddress, encoderInput);
+        savedEncoderInput = encoderInput;
       }
     } 
 
     lastButtonDown = buttonDown;
     stepper.runSpeed();
 
-    delay(1);
+    delay(0.25);
   }
 }
