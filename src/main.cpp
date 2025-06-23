@@ -6,20 +6,21 @@
 
 //#define DEBUG
 
-const int dirPin = 2;
-const int stepPin = 3;
+const int stepperDirPin = 2;
+const int stepperStepPin = 3;
 const int encoderPinA = 5;
 const int encoderPinB = 6;
 const int buttonPin = 4;
 
-const int eepromSpeedAddress = 0;
-const int speedSaveTimeout = 2000;
-const int buttonDebounceTimeout = 250;
-
 const int encoderMax = 100;  // Number of encoder steps after which we ignore futher increase, 
-                             // goes both sides of 0, e.g. 0encoderMax to encoderMax
+                             // goes both sides of 0, e.g. -encoderMax to encoderMax
 
 const int stepperMaxSpeed = 2000;  // Max stepper speed in its steps per seconds
+
+const int eepromSpeedAddress = 0;
+const int speedSaveTimeout = 2000;
+
+const int buttonDebounceTimeout = 250;
 
 int getProgressiveSpeed(int speed) {
   const int sign = (speed < 0) ? -1 : 1;
@@ -42,11 +43,9 @@ void setup() {
     Serial.begin(9600);
   #endif
 
-  AccelStepper stepper(AccelStepper::DRIVER, stepPin, dirPin);
+  AccelStepper stepper(AccelStepper::DRIVER, stepperStepPin, stepperDirPin);
   Encoder encoder(encoderPinA, encoderPinB);
 
-  pinMode(encoderPinA, INPUT_PULLUP);
-  pinMode(encoderPinB, INPUT_PULLUP);
   pinMode(buttonPin, INPUT_PULLUP);
 
   EEPROM.get(eepromSpeedAddress, savedEncoderInput);
